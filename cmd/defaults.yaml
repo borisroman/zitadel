@@ -163,6 +163,11 @@ Database:
         Cert: # ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_CERT
         Key: # ZITADEL_DATABASE_POSTGRES_ADMIN_SSL_KEY
 
+# The IDGenerator defines the type of ID generator used by ZITADEL.
+# The default is GeneratorTypeSonyFlake.
+IDGenerator: 0 # ZITADEL_IDGENERATOR (0: GeneratorTypeSonyFlake, 1: GeneratorTypeUUIDv7)
+
+# When using GeneratorTypeSonyFlake, the following settings are available:
 Machine:
   # Cloud-hosted VMs need to specify their metadata endpoint so that the machine can be uniquely identified.
   Identification:
@@ -231,6 +236,13 @@ Projections:
     custom_texts:
       TransactionDuration: 2s
       BulkLimit: 400
+    project_grant_fields:
+      TransactionDuration: 0s
+      BulkLimit: 2000
+    org_domain_verified_fields:
+      TransactionDuration: 0s
+      BulkLimit: 2000
+    
     # The Notifications projection is used for sending emails and SMS to users
     Notifications:
       # As notification projections don't result in database statements, retries don't have an effect

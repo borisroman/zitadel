@@ -68,7 +68,7 @@ import (
 	old_es "github.com/zitadel/zitadel/internal/eventstore/repository/sql"
 	new_es "github.com/zitadel/zitadel/internal/eventstore/v3"
 	"github.com/zitadel/zitadel/internal/i18n"
-	"github.com/zitadel/zitadel/internal/id"
+	"github.com/zitadel/zitadel/internal/id_generator/sonyflake"
 	"github.com/zitadel/zitadel/internal/logstore"
 	"github.com/zitadel/zitadel/internal/logstore/emitters/access"
 	"github.com/zitadel/zitadel/internal/logstore/emitters/execution"
@@ -423,11 +423,9 @@ func startAPIs(
 	}
 	instanceInterceptor := middleware.InstanceInterceptor(queries, config.HTTP1HostHeader, config.ExternalDomain, login.IgnoreInstanceEndpoints...)
 	assetsCache := middleware.AssetsCacheInterceptor(config.AssetStorage.Cache.MaxAge, config.AssetStorage.Cache.SharedMaxAge)
-	apis.RegisterHandlerOnPrefix(assets.HandlerPrefix, assets.NewHandler(commands, verifier, config.InternalAuthZ, id.SonyFlakeGenerator(), store, queries, middleware.CallDurationHandler, instanceInterceptor.Handler, assetsCache.Handler, limitingAccessInterceptor.Handle))
+	apis.RegisterHandlerOnPrefix(assets.HandlerPrefix, assets.NewHandler(commands, verifier, config.InternalAuthZ, store, queries, middleware.CallDurationHandler, instanceInterceptor.Handler, assetsCache.Handler, limitingAccessInterceptor.Handle))
 
-	apis.RegisterHandlerOnPrefix(idp.HandlerPrefix, idp.NewHandler(commands, queries, keys.IDPConfig, config.ExternalSecure, instanceInterceptor.Handler))
-
-	userAgentInterceptor, err := middleware.NewUserAgentHandler(config.UserAgentCookie, keys.UserAgentCookieKey, id.SonyFlakeGenerator(), config.ExternalSecure, login.EndpointResources, login.EndpointExternalLoginCallbackFormPost, login.EndpointSAMLACS)
+	userAgentInterceptor, err := middleware.NewUserAgentHandler(config.UserAgentCookie, keys.UserAgentCookieKey, config.ExternalSecure, login.EndpointResources, login.EndpointExternalLoginCallbackFormPost, login.EndpointSAMLACS)
 	if err != nil {
 		return nil, err
 	}
@@ -490,6 +488,8 @@ func startAPIs(
 	apis.RegisterHandlerOnPrefix(login.HandlerPrefix, l.Handler())
 	apis.HandleFunc(login.EndpointDeviceAuth, login.RedirectDeviceAuthToPrefix)
 
+	apis.RegisterHandlerOnPrefix(idp.HandlerPrefix, idp.NewHandler(commands, queries, keys.IDPConfig, config.ExternalSecure, instanceInterceptor.Handler, login.IDPCallbackRedirect))
+
 	// After OIDC provider so that the callback endpoint can be used
 	if err := apis.RegisterService(ctx, oidc_v2.CreateServer(commands, queries, oidcServer, config.ExternalSecure)); err != nil {
 		return nil, err
@@ -551,15 +551,17 @@ func showBasicInformation(startConfig *Config) {
 
 	consoleURL := fmt.Sprintf("%s://%s:%v/ui/console\n", http, startConfig.ExternalDomain, startConfig.ExternalPort)
 	healthCheckURL := fmt.Sprintf("%s://%s:%v/debug/healthz\n", http, startConfig.ExternalDomain, startConfig.ExternalPort)
+	machineIdMethod := sonyflake.MachineIdentificationMethod()
 
 	insecure := !startConfig.TLS.Enabled && !startConfig.ExternalSecure
 
 	fmt.Printf(" ===============================================================\n\n")
-	fmt.Printf(" Version          : %s\n", build.Version())
-	fmt.Printf(" TLS enabled      : %v\n", startConfig.TLS.Enabled)
-	fmt.Printf(" External Secure  : %v\n", startConfig.ExternalSecure)
-	fmt.Printf(" Console URL      : %s", color.BlueString(consoleURL))
-	fmt.Printf(" Health Check URL : %s", color.BlueString(healthCheckURL))
+	fmt.Printf(" Version          	: %s\n", build.Version())
+	fmt.Printf(" TLS enabled      	: %v\n", startConfig.TLS.Enabled)
+	fmt.Printf(" External Secure 	: %v\n", startConfig.ExternalSecure)
+	fmt.Printf(" Machine Id Method	: %v\n", machineIdMethod)
+	fmt.Printf(" Console URL      	: %s", color.BlueString(consoleURL))
+	fmt.Printf(" Health Check URL 	: %s", color.BlueString(healthCheckURL))
 	if insecure {
 		fmt.Printf("\n %s: you're using plain http without TLS. Be aware this is \n", color.RedString("Warning"))
 		fmt.Printf(" not a secure setup and should only be used for test systems.         \n")

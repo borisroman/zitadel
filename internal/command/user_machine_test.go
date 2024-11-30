@@ -9,8 +9,8 @@ import (
 	"github.com/zitadel/zitadel/internal/domain"
 	"github.com/zitadel/zitadel/internal/eventstore"
 	"github.com/zitadel/zitadel/internal/eventstore/v1/models"
-	"github.com/zitadel/zitadel/internal/id"
-	id_mock "github.com/zitadel/zitadel/internal/id/mock"
+	"github.com/zitadel/zitadel/internal/id_generator"
+	id_mock "github.com/zitadel/zitadel/internal/id_generator/mock"
 	"github.com/zitadel/zitadel/internal/repository/org"
 	"github.com/zitadel/zitadel/internal/repository/user"
 	"github.com/zitadel/zitadel/internal/zerrors"
@@ -19,7 +19,7 @@ import (
 func TestCommandSide_AddMachine(t *testing.T) {
 	type fields struct {
 		eventstore  *eventstore.Eventstore
-		idGenerator id.Generator
+		idGenerator id_generator.Generator
 	}
 	type args struct {
 		ctx     context.Context
@@ -148,13 +148,59 @@ func TestCommandSide_AddMachine(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "add machine - custom id, ok",
+			fields: fields{
+				eventstore: eventstoreExpect(
+					t,
+					expectFilter(),
+					expectFilter(
+						eventFromEventPusher(
+							org.NewDomainPolicyAddedEvent(context.Background(),
+								&user.NewAggregate("optionalID1", "org1").Aggregate,
+								true,
+								true,
+								true,
+							),
+						),
+					),
+					expectPush(
+						user.NewMachineAddedEvent(context.Background(),
+							&user.NewAggregate("optionalID1", "org1").Aggregate,
+							"username",
+							"name",
+							"description",
+							true,
+							domain.OIDCTokenTypeBearer,
+						),
+					),
+				),
+			},
+			args: args{
+				ctx: context.Background(),
+				machine: &Machine{
+					ObjectRoot: models.ObjectRoot{
+						AggregateID:   "optionalID1",
+						ResourceOwner: "org1",
+					},
+					Description: "description",
+					Name:        "name",
+					Username:    "username",
+				},
+			},
+			res: res{
+				want: &domain.ObjectDetails{
+					ResourceOwner: "org1",
+				},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			r := &Commands{
-				eventstore:  tt.fields.eventstore,
-				idGenerator: tt.fields.idGenerator,
+				eventstore: tt.fields.eventstore,
 			}
+			id_generator.SetGenerator(tt.fields.idGenerator)
 			got, err := r.AddMachine(tt.args.ctx, tt.args.machine)
 			if tt.res.err == nil {
 				assert.NoError(t, err)

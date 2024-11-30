@@ -15,8 +15,8 @@ import (
 	"github.com/zitadel/zitadel/internal/crypto"
 	"github.com/zitadel/zitadel/internal/domain"
 	"github.com/zitadel/zitadel/internal/eventstore"
-	"github.com/zitadel/zitadel/internal/id"
-	id_mock "github.com/zitadel/zitadel/internal/id/mock"
+	"github.com/zitadel/zitadel/internal/id_generator"
+	id_mock "github.com/zitadel/zitadel/internal/id_generator/mock"
 	"github.com/zitadel/zitadel/internal/repository/idp"
 	"github.com/zitadel/zitadel/internal/repository/org"
 	"github.com/zitadel/zitadel/internal/repository/user"
@@ -26,7 +26,7 @@ import (
 func TestCommandSide_AddUserHuman(t *testing.T) {
 	type fields struct {
 		eventstore         func(t *testing.T) *eventstore.Eventstore
-		idGenerator        id.Generator
+		idGenerator        id_generator.Generator
 		userPasswordHasher *crypto.Hasher
 		newCode            encrypedCodeFunc
 		checkPermission    domain.PermissionCheck
@@ -319,7 +319,7 @@ func TestCommandSide_AddUserHuman(t *testing.T) {
 			},
 		},
 		{
-			name: "add human (with initial code), ok",
+			name: "add human (email not verified, no password), ok (init code)",
 			fields: fields{
 				eventstore: expectEventstore(
 					expectFilter(),
@@ -389,7 +389,7 @@ func TestCommandSide_AddUserHuman(t *testing.T) {
 			},
 		},
 		{
-			name: "add human (with password and initial code), ok",
+			name: "add human (email not verified, with password), ok (init code)",
 			fields: fields{
 				eventstore: expectEventstore(
 					expectFilter(),
@@ -450,6 +450,65 @@ func TestCommandSide_AddUserHuman(t *testing.T) {
 				},
 				secretGenerator: GetMockSecretGenerator(t),
 				allowInitMail:   true,
+				codeAlg:         crypto.CreateMockEncryptionAlg(gomock.NewController(t)),
+			},
+			res: res{
+				want: &domain.ObjectDetails{
+					ResourceOwner: "org1",
+				},
+				wantID: "user1",
+			},
+		},
+		{
+			name: "add human (email not verified, no password, no allowInitMail), ok (email verification with passwordInit)",
+			fields: fields{
+				eventstore: expectEventstore(
+					expectFilter(),
+					expectFilter(
+						eventFromEventPusher(
+							org.NewDomainPolicyAddedEvent(context.Background(),
+								&user.NewAggregate("user1", "org1").Aggregate,
+								true,
+								true,
+								true,
+							),
+						),
+					),
+					expectPush(
+						newAddHumanEvent("", false, true, "", language.English),
+						user.NewHumanEmailCodeAddedEventV2(context.Background(),
+							&user.NewAggregate("user1", "org1").Aggregate,
+							&crypto.CryptoValue{
+								CryptoType: crypto.TypeEncryption,
+								Algorithm:  "enc",
+								KeyID:      "id",
+								Crypted:    []byte("emailverify"),
+							},
+							1*time.Hour,
+							"",
+							false,
+							"",
+						),
+					),
+				),
+				checkPermission: newMockPermissionCheckAllowed(),
+				idGenerator:     id_mock.NewIDGeneratorExpectIDs(t, "user1"),
+				newCode:         mockEncryptedCode("emailverify", time.Hour),
+			},
+			args: args{
+				ctx:   context.Background(),
+				orgID: "org1",
+				human: &AddHuman{
+					Username:  "username",
+					FirstName: "firstname",
+					LastName:  "lastname",
+					Email: Email{
+						Address: "email@test.ch",
+					},
+					PreferredLanguage: language.English,
+				},
+				secretGenerator: GetMockSecretGenerator(t),
+				allowInitMail:   false,
 				codeAlg:         crypto.CreateMockEncryptionAlg(gomock.NewController(t)),
 			},
 			res: res{
@@ -609,7 +668,7 @@ func TestCommandSide_AddUserHuman(t *testing.T) {
 			},
 		},
 		{
-			name: "add human email verified, ok",
+			name: "add human email verified and password, ok",
 			fields: fields{
 				eventstore: expectEventstore(
 					expectFilter(),
@@ -1084,8 +1143,9 @@ func TestCommandSide_AddUserHuman(t *testing.T) {
 				},
 				wantID: "user1",
 			},
-		}, {
-			name: "add human (with return code), ok",
+		},
+		{
+			name: "add human (with phone return code), ok",
 			fields: fields{
 				eventstore: expectEventstore(
 					expectFilter(),
@@ -1489,7 +1549,6 @@ func TestCommandSide_AddUserHuman(t *testing.T) {
 			r := &Commands{
 				eventstore:         tt.fields.eventstore(t),
 				userPasswordHasher: tt.fields.userPasswordHasher,
-				idGenerator:        tt.fields.idGenerator,
 				newEncryptedCode:   tt.fields.newCode,
 				checkPermission:    tt.fields.checkPermission,
 				multifactors: domain.MultifactorConfigs{
@@ -1499,6 +1558,7 @@ func TestCommandSide_AddUserHuman(t *testing.T) {
 					},
 				},
 			}
+			id_generator.SetGenerator(tt.fields.idGenerator)
 			err := r.AddUserHuman(tt.args.ctx, tt.args.orgID, tt.args.human, tt.args.allowInitMail, tt.args.codeAlg)
 			if tt.res.err == nil {
 				if !assert.NoError(t, err) {
